@@ -2,25 +2,23 @@
 authors = ["Michael Kefeder"]
 edition = "2021"
 readme = "README.md"
-name = "rp2040-rtic-usb-serial-blinky"
+name = "nucleoh723zg-serial-blinky"
 version = "0.1.0"
 resolver = "2"
+description = "RTIC-based serial processing blinky program for the NUCLEO-H723ZG board"
 
 [dependencies]
-cortex-m = "0.7.7"
-rtic = { version = "2.0.0-alpha.1", features = ["thumbv6-backend"]}
-rtic-monotonics = { version = "1.0.0-alpha.2", features = ["rp2040"]}
+cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
+rtic = { version = "2.0.0-alpha.1", features = ["thumbv7-backend"]}
+dwt-systick-monotonic = "0.1.0-alpha.0"
 embedded-hal = { version = "0.2.7", features = ["unproven"] }
 
 defmt = "0.3.2"
 defmt-rtt = "0.4.0"
 panic-probe = { version = "0.3.0", features = ["print-defmt"] }
 
-# We're using a Pico by default on this template
-rp-pico = "0.7.0"
-usb-device = "0.2.9"
-usbd-serial = "0.1.1"
-rp2040-hal = "0.8.0"
+# board-specific features
+stm32h7xx-hal = {version = "0.12.2", features = ["stm32h735","rt","device-selected"]}
 
 blink-proto = { path = "../blink-proto" }
 heapless = "0.7.16"
@@ -76,3 +74,23 @@ debug-assertions = false
 incremental = false
 lto = 'fat'
 opt-level = 3
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+# Was
+#[dependencies]
+#cortex-m = "0.7"
+#cortex-m-rt = "0.7"
+#embedded-hal = { version = "0.2.5", features = ["unproven"] }
+#defmt = "0.3.4"
+#defmt-rtt = "0.3"
+#panic-halt = "0.2.0"
+#panic-probe = { version = "0.3", features = ["print-defmt"] }
+#rp2040-pac = { git = "https://github.com/rp-rs/rp2040-pac", branch="main" }
+#rp2040-boot2 = "0.1.0"
+#rp-pico = "0.7.0"
+#rp2040-hal = "0.8.2"
+#
+#[profile.release]
+#codegen-units = 1 # better optimizations
+#debug = true # symbols are nice and they don't increase the size on Flash
+#lto = true # better optimizations
