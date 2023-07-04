@@ -21,11 +21,17 @@ mod app {
     use core::mem::MaybeUninit;
     use defmt::*;
     
-    use stm32h7xx_hal::{
-        gpio::{self, gpiob::PB0, PushPull, Output, Pin},
+    use stm32h7xx_hal as hal;
+    use crate::app::hal::{
+        gpio::{Output, Pin},
         delay::Delay,
+        device::USART3,
+        serial::{config::Config, Serial, Rx, Tx},
         prelude::*,
     };
+    use core::fmt::Write;
+    use hal::nb as nb;
+    use nb::block;
 
     #[shared] // Multiple tasks can access this struct
     struct Shared {
@@ -37,7 +43,7 @@ mod app {
     #[local] // Local info for the task that blinks the LED
     struct Local {
         led: Pin<'B', 0, Output>,
-        //serial: SerialPort<'static, UsbBus>, //FIXME: adapt this for the USART on STM32
+        serial: Serial<USART3>,
         msg_buf: heapless::Vec<u8, { blink_proto::MSG_BUF_SIZE }>, // message buffer for the blink protocol with a static buffer size
         delay: Delay
     }
@@ -58,7 +64,8 @@ mod app {
 
         // Constrain and Freeze clock
         let rcc = dp.RCC.constrain();
-        let ccdr = rcc.sys_ck(100.MHz()).freeze(pwrcfg, &dp.SYSCFG);    
+
+        let ccdr = rcc.sys_ck(160.MHz()).freeze(pwrcfg, &dp.SYSCFG);
         
         let delay = c.core.SYST.delay(ccdr.clocks);
 
@@ -66,8 +73,17 @@ mod app {
         let led = gpiob.pb0.into_push_pull_output();
 
         /* FIXME: this should be adapted to use the USART on STM32H7 */
-        //let serial = SerialPort::new(usb_bus); // Create a serial port running over the USB device
 
+        let gpiod = dp.GPIOD.split(ccdr.peripheral.GPIOD);
+        let tx_pin = gpiod.pd8.into_alternate();
+        let rx_pin = gpiod.pd9.into_alternate();
+        let mut serial = dp.USART3.serial(
+                                          (tx_pin, rx_pin),
+                                          19_200.bps(),
+                                          ccdr.peripheral.USART3,
+                                          &ccdr.clocks,
+                                         ).unwrap();
+    
         let led_blink = true; // Set our variable => we want to blink
 
         // Transcript from ~45:43
@@ -78,6 +94,7 @@ mod app {
         let msg_q = heapless::Deque::<blink_proto::Message, 10>::new(); // We initialize our double-ended queue for messages
 
         info!("Send me a message!");
+        serial.write_str("Send me a message!\n").expect("Failed writing to USART");
         // Init function needs to return the information shared between the tasks
         (
             Shared {
@@ -87,7 +104,7 @@ mod app {
             },
             Local {
                 led,
-                /*serial,*/
+                serial,
                 msg_buf,
                 delay,
             },
@@ -109,79 +126,73 @@ mod app {
         }
     }
     
+    /* We could also try to use DMA (see https://github.com/kalkyl/f303-rtic/blob/main/src/bin/serial.rs) */
     /// USB interrupt handler. Runs every time the host requests new data.
-    // #[task(binds=USBCTRL_IRQ, local = [serial, usb_dev, msg_buf], shared = [led_blink, led_pause, msg_q])]
-    // fn on_usb(mut ctx: on_usb::Context) {
-    //     let serial = ctx.local.serial;
-    //     if !ctx.local.usb_dev.poll(&mut [serial]) {
-    //         return;
-    //     }
-    //     let mut buf = [0u8; blink_proto::MSG_BUF_SIZE];
-    //     let msg_buf = ctx.local.msg_buf;
-    //     match serial.read(&mut buf) {
-    //         Ok(count) if count > 0 => {
-    //             if msg_buf.extend_from_slice(&buf[..count]).is_err() {
-    //                 error!("bufcopy {}", count);
-    //                 msg_buf.clear();
-    //             }
-    //             use blink_proto::ParseResult::*;
-    //             match blink_proto::parse(msg_buf) {
-    //                 Found(msg) => {
-    //                     if let blink_proto::Message::Ping { id } = msg {
-    //                         info!("{:?}", msg);
-    //                         let pong = blink_proto::Message::Pong { id };
-    //                         ctx.shared.msg_q.lock(|q| q.push_back(pong).ok());
-    //                     }
-    //                     if let blink_proto::Message::Led {
-    //                         id,
-    //                         blinking,
-    //                         pause,
-    //                     } = msg
-    //                     {
-    //                         info!("{:?}", msg);
-    //                         ctx.shared.led_blink.lock(|b| *b = blinking);
-    //                         ctx.shared.led_pause.lock(|p| *p = pause);
-    //                         // confirm execution with the same message
-    //                         let pong = blink_proto::Message::Led {
-    //                             id,
-    //                             blinking,
-    //                             pause,
-    //                         };
-    //                         ctx.shared.msg_q.lock(|q| q.push_back(pong).ok());
-    //                     }
-    //                     msg_buf.clear();
-    //                     // Transcript for ~49:56
-    //                 }
-    //                 Need(b) => {
-    //                     debug!("Need({})", b);
-    //                 } // continue reading
-    //                 HeaderInvalid | DataInvalid => {
-    //                     debug!("invalid");
-    //                     msg_buf.clear();
-    //                 }
-    //             }
+    #[task(binds=USART3, local = [serial, msg_buf], shared = [led_blink, led_pause, msg_q])]
+    fn on_usb(mut ctx: on_usb::Context) {
+        let serial = ctx.local.serial;
+        let msg_buf = ctx.local.msg_buf;
+        match serial.read() {
+            Ok(rx_byte) => {
+                info!("Received {}", rx_byte);
+                if msg_buf.push(rx_byte).is_err() {
+                    error!("bufcopy 1 byte");
+                    msg_buf.clear();
+                }
+                use blink_proto::ParseResult::*;
+                match blink_proto::parse(msg_buf) {
+                    Found(msg) => {
+                        if let blink_proto::Message::Ping { id } = msg {
+                            info!("{:?}", msg);
+                            let pong = blink_proto::Message::Pong { id };
+                            ctx.shared.msg_q.lock(|q| q.push_back(pong).ok());
+                        }
+                        if let blink_proto::Message::Led {
+                            id,
+                            blinking,
+                            pause,
+                        } = msg
+                        {
+                            info!("{:?}", msg);
+                            ctx.shared.led_blink.lock(|b| *b = blinking);
+                            ctx.shared.led_pause.lock(|p| *p = pause);
+                            // confirm execution with the same message
+                            let pong = blink_proto::Message::Led {
+                                id,
+                                blinking,
+                                pause,
+                            };
+                            ctx.shared.msg_q.lock(|q| q.push_back(pong).ok());
+                        }
+                        msg_buf.clear();
+                        // Transcript for ~49:56
+                    }
+                    Need(b) => {
+                        debug!("Need({})", b);
+                    } // continue reading
+                    HeaderInvalid | DataInvalid => {
+                        debug!("invalid");
+                        msg_buf.clear();
+                    }
+                }
 
-    //             // write back to the host
-    //             loop {
-    //                 let msg = ctx.shared.msg_q.lock(|q| q.pop_front());
-    //                 let bytes = match msg {
-    //                     Some(msg) => match blink_proto::wrap_msg(msg) {
-    //                         Ok(msg_bytes) => msg_bytes,
-    //                         Err(_) => break,
-    //                     },
-    //                     None => break,
-    //                 };
-    //                 let mut wr_ptr = bytes.as_slice();
-    //                 while !wr_ptr.is_empty() {
-    //                     let _ = serial.write(wr_ptr).map(|len| {
-    //                         wr_ptr = &wr_ptr[len..];
-    //                     });
-    //                 }
-    //             }
-    //         }
-    //         _ => {}
-    //     }
-    // }
+                // write back to the host
+                loop {
+                    let msg = ctx.shared.msg_q.lock(|q| q.pop_front());
+                    let bytes = match msg {
+                        Some(msg) => match blink_proto::wrap_msg(msg) {
+                            Ok(msg_bytes) => msg_bytes,
+                            Err(_) => break,
+                        },
+                        None => break,
+                    };
+                    let wr_ptr = bytes.as_slice();
+                    let _ = wr_ptr.iter().map(|c| block!(serial.write(*c))).last();
+                }
+            }
+            _ => {}
+        }
+    }
 
     /// Task with least priority that only runs when nothing else is running.
     #[idle]
