@@ -18,10 +18,8 @@ enabled = true
 halt_afterwards = false
 
 [default.general]
-chip = "RP2040"
+chip = "STM32H723ZGTx"
 log_level = "WARN"
-# RP2040 does not support connect_under_reset
-connect_under_reset = false
 
 [default.rtt]
 enabled = true
