@@ -2,7 +2,7 @@
 authors = ["Michael Kefeder"]
 edition = "2021"
 readme = "README.md"
-name = "nucleoh723zg-serial-blinky"
+name = "nucleoh723zg-rtic-usart3-serial-blinky"
 version = "0.1.0"
 resolver = "2"
 description = "RTIC-based serial processing blinky program for the NUCLEO-H723ZG board"

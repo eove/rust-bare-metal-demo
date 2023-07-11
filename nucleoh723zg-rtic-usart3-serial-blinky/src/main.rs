@@ -18,14 +18,13 @@ defmt::timestamp! {"{=u64}", {
 
 #[rtic::app(device = stm32h7xx_hal::pac, peripherals = true, dispatchers = [USART1])]
 mod app {
-    use core::mem::MaybeUninit;
     use defmt::*;
     
     use stm32h7xx_hal as hal;
     use crate::app::hal::{
         gpio::{Output, Pin},
         device::USART3,
-        serial::{Event, Serial, Rx, Tx},
+        serial::{Event, Serial},
         prelude::*,
     };
     use rtic_monotonics::systick::*;
