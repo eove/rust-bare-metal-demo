@@ -24,11 +24,11 @@ mod app {
     use stm32h7xx_hal as hal;
     use crate::app::hal::{
         gpio::{Output, Pin},
-        delay::Delay,
         device::USART3,
         serial::{config::Config, Serial, Rx, Tx},
         prelude::*,
     };
+    use rtic_monotonics::systick::*;
     use core::fmt::Write;
     use hal::nb as nb;
     use nb::block;
@@ -45,14 +45,11 @@ mod app {
         led: Pin<'B', 0, Output>,
         serial: Serial<USART3>,
         msg_buf: heapless::Vec<u8, { blink_proto::MSG_BUF_SIZE }>, // message buffer for the blink protocol with a static buffer size
-        delay: Delay
     }
 
-    // #[monotonic(binds = SysTick, default = true)]
-    // type MyMono = DwtSystick<520_000_000>; // Our STM32H723 CPU is running at 520 MHz on (see the system clock setup below)
-
     #[init]
-    fn init(mut c: init::Context) -> (Shared, Local/*, init::Monotonics*/) {
+    fn init(mut c: init::Context) -> (Shared, Local) {
+        /* Note: RTICv2 example [here](https://rtic.rs/2/book/en/migration_v1_v2/complete_example.html) is a good porting guide and is using STM32 target */
         let dp = c.device;
 
         c.core.DCB.enable_trace();
@@ -65,14 +62,13 @@ mod app {
         // Constrain and Freeze clock
         let rcc = dp.RCC.constrain();
 
-        let ccdr = rcc.sys_ck(160.MHz()).freeze(pwrcfg, &dp.SYSCFG);
-        
-        let delay = c.core.SYST.delay(ccdr.clocks);
+        let ccdr = rcc.sys_ck(100.MHz()).freeze(pwrcfg, &dp.SYSCFG);
 
+        let systick_token = rtic_monotonics::create_systick_token!();
+        Systick::start(c.core.SYST, 100_000_000, systick_token);
+        
         let gpiob = dp.GPIOB.split(ccdr.peripheral.GPIOB);
         let led = gpiob.pb0.into_push_pull_output();
-
-        /* FIXME: this should be adapted to use the USART on STM32H7 */
 
         let gpiod = dp.GPIOD.split(ccdr.peripheral.GPIOD);
         let tx_pin = gpiod.pd8.into_alternate();
@@ -106,12 +102,11 @@ mod app {
                 led,
                 serial,
                 msg_buf,
-                delay,
             },
         )
     }
 
-    #[task(priority = 1, local = [led, delay], shared = [led_blink, led_pause])] // We define the local data we want to access: led (note that only one task can have access to local members)
+    #[task(priority = 1, local = [led], shared = [led_blink, led_pause])] // We define the local data we want to access: led (note that only one task can have access to local members)
     async fn led_blinker(mut ctx: led_blinker::Context) {
         loop {
             let mut pause = 500;
@@ -122,7 +117,7 @@ mod app {
                 }
                 pause = *led_pause;
             });
-            ctx.local.delay.delay_ms(pause as u16);
+            Systick::delay((pause as u32).millis()).await;
         }
     }
     
