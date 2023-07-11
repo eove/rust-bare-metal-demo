@@ -25,7 +25,7 @@ mod app {
     use crate::app::hal::{
         gpio::{Output, Pin},
         device::USART3,
-        serial::{config::Config, Serial, Rx, Tx},
+        serial::{Event, Serial, Rx, Tx},
         prelude::*,
     };
     use rtic_monotonics::systick::*;
@@ -91,6 +91,8 @@ mod app {
 
         info!("Send me a message!");
         serial.write_str("Send me a message!\n").expect("Failed writing to USART");
+
+        serial.listen(Event::Rxne);
         // Init function needs to return the information shared between the tasks
         (
             Shared {
@@ -127,65 +129,67 @@ mod app {
     fn on_usb(mut ctx: on_usb::Context) {
         let serial = ctx.local.serial;
         let msg_buf = ctx.local.msg_buf;
-        match serial.read() {
-            Ok(rx_byte) => {
-                info!("Received {}", rx_byte);
-                if msg_buf.push(rx_byte).is_err() {
-                    error!("bufcopy 1 byte");
-                    msg_buf.clear();
-                }
-                use blink_proto::ParseResult::*;
-                match blink_proto::parse(msg_buf) {
-                    Found(msg) => {
-                        if let blink_proto::Message::Ping { id } = msg {
-                            info!("{:?}", msg);
-                            let pong = blink_proto::Message::Pong { id };
-                            ctx.shared.msg_q.lock(|q| q.push_back(pong).ok());
-                        }
-                        if let blink_proto::Message::Led {
-                            id,
-                            blinking,
-                            pause,
-                        } = msg
-                        {
-                            info!("{:?}", msg);
-                            ctx.shared.led_blink.lock(|b| *b = blinking);
-                            ctx.shared.led_pause.lock(|p| *p = pause);
-                            // confirm execution with the same message
-                            let pong = blink_proto::Message::Led {
+        if serial.is_rxne() {
+            match serial.read() {
+                Ok(rx_byte) => {
+                    info!("Received {:#04x}", rx_byte);
+                    if msg_buf.push(rx_byte).is_err() {
+                        error!("bufcopy 1 byte");
+                        msg_buf.clear();
+                    }
+                    use blink_proto::ParseResult::*;
+                    match blink_proto::parse(msg_buf) {
+                        Found(msg) => {
+                            if let blink_proto::Message::Ping { id } = msg {
+                                info!("{:?}", msg);
+                                let pong = blink_proto::Message::Pong { id };
+                                ctx.shared.msg_q.lock(|q| q.push_back(pong).ok());
+                            }
+                            if let blink_proto::Message::Led {
                                 id,
                                 blinking,
                                 pause,
-                            };
-                            ctx.shared.msg_q.lock(|q| q.push_back(pong).ok());
+                            } = msg
+                            {
+                                info!("{:?}", msg);
+                                ctx.shared.led_blink.lock(|b| *b = blinking);
+                                ctx.shared.led_pause.lock(|p| *p = pause);
+                                // confirm execution with the same message
+                                let pong = blink_proto::Message::Led {
+                                    id,
+                                    blinking,
+                                    pause,
+                                };
+                                ctx.shared.msg_q.lock(|q| q.push_back(pong).ok());
+                            }
+                            msg_buf.clear();
+                            // Transcript for ~49:56
                         }
-                        msg_buf.clear();
-                        // Transcript for ~49:56
+                        Need(b) => {
+                            debug!("Need({})", b);
+                        } // continue reading
+                        HeaderInvalid | DataInvalid => {
+                            debug!("invalid");
+                            msg_buf.clear();
+                        }
                     }
-                    Need(b) => {
-                        debug!("Need({})", b);
-                    } // continue reading
-                    HeaderInvalid | DataInvalid => {
-                        debug!("invalid");
-                        msg_buf.clear();
-                    }
-                }
 
-                // write back to the host
-                loop {
-                    let msg = ctx.shared.msg_q.lock(|q| q.pop_front());
-                    let bytes = match msg {
-                        Some(msg) => match blink_proto::wrap_msg(msg) {
-                            Ok(msg_bytes) => msg_bytes,
-                            Err(_) => break,
-                        },
-                        None => break,
-                    };
-                    let wr_ptr = bytes.as_slice();
-                    let _ = wr_ptr.iter().map(|c| block!(serial.write(*c))).last();
+                    // write back to the host
+                    loop {
+                        let msg = ctx.shared.msg_q.lock(|q| q.pop_front());
+                        let bytes = match msg {
+                            Some(msg) => match blink_proto::wrap_msg(msg) {
+                                Ok(msg_bytes) => msg_bytes,
+                                Err(_) => break,
+                            },
+                            None => break,
+                        };
+                        let wr_ptr = bytes.as_slice();
+                        let _ = wr_ptr.iter().map(|c| block!(serial.write(*c))).last();
+                    }
                 }
+                _ => {}
             }
-            _ => {}
         }
     }
 
