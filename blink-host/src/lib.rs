@@ -3,7 +3,7 @@
 use serialport::SerialPort;
 
 pub fn connect(port_name: &str) -> Result<Box<dyn SerialPort>, serialport::Error> {
-    serialport::new(port_name, 115200)
+    serialport::new(port_name, 19_200)
         .data_bits(serialport::DataBits::Eight)
         .flow_control(serialport::FlowControl::None)
         .stop_bits(serialport::StopBits::One)
