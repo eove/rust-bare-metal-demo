@@ -6,7 +6,9 @@ Rust code accompanying a presentation by Michael Kefeder showing how to:
 - communicate between host to NUCLEO-H723ZG using a custom binary protocol
 - introduction into RTIC v2
 
-> **Note**  
+The original presentation and code mentionned above target a Raspberry Pico board. In this repo, that code has been ported to allow the demo to run on a NUCLEO-H723ZG board
+
+> **Note**
 > The initial demo from Mike Kefeder showed how to make a USB CDC compatible device on the RP2040.
 > We don't need this part on the NUCLEO-H723ZG because that board provides the host with a virtual serial port directly attached to the STM32 chip's USART
 
@@ -32,4 +34,4 @@ for GDB debugging environment follow [OS Specific instructions](https://docs.rus
 - `nucleoh723zg-blink` the classic hello world of embedded blinking a LED
 - `blink-host` host client for the serial port over USB protocol
 - `blink-proto` the protocol implementation for host using `std` and RP2040 `no_std`
-- `rp2040-rtic-usb-serial-blinky` the usb-serial communication firmware using RTIC v2 alpha (needs rust nightly)
+- `nucleoh723zg-rtic-usart3-serial-blinky` the usb-serial communication firmware using RTIC v2 alpha (needs rust nightly)
